@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-""" Manually decrypt a wep message given the WEP key"""
+""" Manually encrypt message as wep given the WEP key"""
 
 __authors__ = "Besseau Léonard, Gamboni Fiona, Michel De la Vallée"
 __copyright__ = "Copyright 2022, HEIG-VD"
