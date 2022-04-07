@@ -24,7 +24,7 @@ def crypt(message: bytes, key: bytes, iv: bytes) -> (bytes, int):
     cipher = RC4(iv + key, streaming=False)
 
     # Convert CRC to bytes
-    # We need to fix the crc to 32 bits
+    # We need to fix the crc to 4 bytes
     crc = struct.pack('I', binascii.crc32(message) & 0xffffffff)
 
     ciphertext = cipher.crypt(message + crc)
@@ -33,7 +33,7 @@ def crypt(message: bytes, key: bytes, iv: bytes) -> (bytes, int):
 
 
 parser = argparse.ArgumentParser(prog="Manual WEP encryptor",
-                                 usage="manual-encryption.py -i wlp2s0mon -m \"SEND HELP\" -k AA:BB:CC:DD:EE -v "
+                                 usage="fragmentation.py -i wlp2s0mon -m \"SEND HELP\" -k AA:BB:CC:DD:EE -v "
                                        "AA:AA:AA",
                                  allow_abbrev=False)
 
@@ -54,22 +54,40 @@ args = parser.parse_args()
 
 key = binascii.unhexlify(args.Key.replace(':', ''))
 
-# Read template capture
 arp = rdpcap('arp.cap')[0]
 
-# Crypt Message and generate ICV
-# Padding is for Logical-Link-Control dummy data
-ciphertext, icv = crypt(b'\x00' * 6 + args.Message.encode('ascii'), key,
-                        arp.iv if args.Iv is None else binascii.unhexlify(args.Iv.replace(':', '')))
+output = PcapWriter("fragment.pcap", append=True, sync=True)
 
-# Update packet with new data
-if args.Iv is not None:
-    arp.iv = binascii.unhexlify(args.Iv.replace(':', ''))
-arp.wepdata = ciphertext
-arp.icv = icv
+fragments = []
+# Padding for logical link control
+plaintext = b'\x00' * 6 + args.Message.encode('ascii')
 
-# We have to set the length to None to force Scapy to recompute it
-arp[RadioTap].len = None
+fragmentSize = math.ceil(len(plaintext) / 3)
 
-# Write packet
-wrpcap('encrypted_packet.pcap', arp)
+# transform message into 3 fragments
+for i in range(0, 3):
+    frag = plaintext[i * fragmentSize: (i + 1) * fragmentSize]
+    frag += b'\0' * (fragmentSize - len(frag))
+    fragments.append(frag)
+
+for i, fragment in enumerate(fragments):
+    # Crypt Message and generate ICV
+    ciphertext, icv = crypt(fragment, key,
+                            arp.iv if args.Iv is None else binascii.unhexlify(args.Iv.replace(':', '')))
+
+    # Update packet with new data
+    if args.Iv is not None:
+        arp.iv = binascii.unhexlify(args.Iv.replace(':', ''))
+    arp.wepdata = ciphertext
+    arp.icv = icv
+
+    # We have to set the length to None to force Scapy to recompute it
+    arp[RadioTap].len = None
+
+    # we set the FCfield depending on whether it's the last fragment or not
+    arp.FCfield.MF = True if i != len(fragments) - 1 else False
+
+    # update fragment count
+    arp.SC = i
+
+    output.write(arp)
